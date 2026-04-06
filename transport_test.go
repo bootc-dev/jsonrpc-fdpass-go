@@ -1,6 +1,7 @@
 package fdpass
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -471,6 +472,220 @@ func TestRequestResponse(t *testing.T) {
 	if req.ID != float64(42) { // JSON numbers become float64
 		t.Errorf("expected ID 42, got %v", req.ID)
 	}
+}
+
+// testFDBatching is a helper that sends fdCount FDs in a single message with
+// the sender's max-per-sendmsg set to maxPerSendmsg, then verifies that all
+// FDs arrive correctly on the receiver side with the right data and ordering.
+func testFDBatching(t *testing.T, fdCount, maxPerSendmsg int) {
+	t.Helper()
+
+	fds, err := createSocketPair()
+	if err != nil {
+		t.Fatalf("failed to create socketpair: %v", err)
+	}
+	defer fds[0].Close()
+	defer fds[1].Close()
+
+	// Create pipes as test FDs
+	type pipePair struct {
+		r *os.File
+		w *os.File
+	}
+	pipes := make([]pipePair, fdCount)
+	sendFDs := make([]*os.File, fdCount)
+	for i := 0; i < fdCount; i++ {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe %d: %v", i, err)
+		}
+		pipes[i] = pipePair{r, w}
+		sendFDs[i] = r
+	}
+
+	// Write distinct data to each pipe so we can verify ordering
+	go func() {
+		for i, p := range pipes {
+			fmt.Fprintf(p.w, "fd-data-%d", i)
+			p.w.Close()
+		}
+	}()
+
+	sender := NewSender(fds[0])
+	sender.SetMaxFDsPerSendmsg(maxPerSendmsg)
+	receiver := NewReceiver(fds[1])
+	defer receiver.Close()
+
+	notif := NewNotification("batch_test", map[string]interface{}{
+		"count": fdCount,
+	})
+	msg := &MessageWithFds{
+		Message:         notif,
+		FileDescriptors: sendFDs,
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sender.Send(msg)
+	}()
+
+	received, err := receiver.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive (fdCount=%d, maxPerSendmsg=%d): %v",
+			fdCount, maxPerSendmsg, err)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("failed to send: %v", err)
+	}
+
+	// Verify message type
+	notifReceived, ok := received.Message.(*Notification)
+	if !ok {
+		t.Fatalf("expected Notification, got %T", received.Message)
+	}
+	if notifReceived.Method != "batch_test" {
+		t.Errorf("expected method 'batch_test', got '%s'", notifReceived.Method)
+	}
+
+	// Verify FD count
+	if len(received.FileDescriptors) != fdCount {
+		t.Fatalf("expected %d FDs, got %d", fdCount, len(received.FileDescriptors))
+	}
+
+	// Verify each FD has the correct data (ordering preserved)
+	for i, f := range received.FileDescriptors {
+		data, err := io.ReadAll(f)
+		f.Close()
+		if err != nil {
+			t.Fatalf("failed to read from FD %d: %v", i, err)
+		}
+		expected := fmt.Sprintf("fd-data-%d", i)
+		if string(data) != expected {
+			t.Errorf("FD %d: expected '%s', got '%s'", i, expected, string(data))
+		}
+	}
+
+	// Clean up sender-side read ends
+	for _, p := range pipes {
+		p.r.Close()
+	}
+}
+
+func TestFDBatchingSmallBatches(t *testing.T) {
+	// Test with batch sizes of 1, 2, 3 to stress the batching logic.
+	// Sending 10 FDs with batch size 1 means 10 separate sendmsg calls
+	// (1 with JSON data + 9 with whitespace padding).
+	for _, batchSize := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("batch_%d_fds_10", batchSize), func(t *testing.T) {
+			testFDBatching(t, 10, batchSize)
+		})
+	}
+}
+
+func TestFDBatchingManyFDs(t *testing.T) {
+	// Test sending many FDs with various batch sizes
+	for _, tc := range []struct {
+		fdCount        int
+		maxPerSendmsg  int
+	}{
+		{20, 3},
+		{50, 7},
+		{100, 10},
+	} {
+		t.Run(fmt.Sprintf("fds_%d_batch_%d", tc.fdCount, tc.maxPerSendmsg), func(t *testing.T) {
+			testFDBatching(t, tc.fdCount, tc.maxPerSendmsg)
+		})
+	}
+}
+
+func TestFDBatchingNoBatching(t *testing.T) {
+	// When batch size >= fd count, no batching occurs (single sendmsg)
+	testFDBatching(t, 5, 500)
+}
+
+func TestFDBatchingFollowedByNonFDMessage(t *testing.T) {
+	// Verify that after a batched FD message, a subsequent message without
+	// FDs is received correctly (no leftover whitespace confusion).
+	fds, err := createSocketPair()
+	if err != nil {
+		t.Fatalf("failed to create socketpair: %v", err)
+	}
+	defer fds[0].Close()
+	defer fds[1].Close()
+
+	sender := NewSender(fds[0])
+	sender.SetMaxFDsPerSendmsg(2) // Force batching
+	receiver := NewReceiver(fds[1])
+	defer receiver.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		// Message 1: 5 FDs, batched in groups of 2
+		pipes := make([]*os.File, 5)
+		for i := range pipes {
+			r, w, _ := os.Pipe()
+			go func(w *os.File) { w.Close() }(w)
+			pipes[i] = r
+		}
+		notif1 := NewNotification("with_fds", nil)
+		if err := sender.Send(&MessageWithFds{Message: notif1, FileDescriptors: pipes}); err != nil {
+			done <- err
+			return
+		}
+
+		// Message 2: no FDs
+		notif2 := NewNotification("no_fds", nil)
+		if err := sender.Send(&MessageWithFds{Message: notif2}); err != nil {
+			done <- err
+			return
+		}
+
+		done <- nil
+	}()
+
+	// Receive message 1 (batched FDs)
+	msg1, err := receiver.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive message 1: %v", err)
+	}
+	if msg1.Message.(*Notification).Method != "with_fds" {
+		t.Error("message 1 method mismatch")
+	}
+	if len(msg1.FileDescriptors) != 5 {
+		t.Fatalf("expected 5 FDs, got %d", len(msg1.FileDescriptors))
+	}
+	for _, f := range msg1.FileDescriptors {
+		f.Close()
+	}
+
+	// Receive message 2 (no FDs)
+	msg2, err := receiver.Receive()
+	if err != nil {
+		t.Fatalf("failed to receive message 2: %v", err)
+	}
+	if msg2.Message.(*Notification).Method != "no_fds" {
+		t.Error("message 2 method mismatch")
+	}
+	if len(msg2.FileDescriptors) != 0 {
+		t.Errorf("expected 0 FDs, got %d", len(msg2.FileDescriptors))
+	}
+
+	if err := <-done; err != nil {
+		t.Fatalf("sender error: %v", err)
+	}
+}
+
+func TestFDBatchingSingleFD(t *testing.T) {
+	// Edge case: single FD with batch size 1 should work (no continuation needed)
+	testFDBatching(t, 1, 1)
+}
+
+func TestFDBatchingExactBoundary(t *testing.T) {
+	// FD count exactly equals batch size — no continuation sendmsg needed
+	testFDBatching(t, 5, 5)
+	// FD count is one more than batch size — exactly one continuation
+	testFDBatching(t, 6, 5)
 }
 
 // createSocketPair creates a pair of connected Unix sockets.
