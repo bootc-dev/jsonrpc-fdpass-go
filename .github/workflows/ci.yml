@@ -18,12 +18,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+      - uses: extractions/setup-just@v2
+      - name: Check (fmt + vet)
+        run: just check
       - name: Build
-        run: go build ./...
-      - name: Vet
-        run: go vet ./...
+        run: just build
       - name: Unit tests
-        run: go test -v -race ./...
+        run: just test-race
 
   integration-tests:
     name: Integration Tests
@@ -33,8 +34,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+      - uses: extractions/setup-just@v2
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build Rust test server
-        run: cargo build --manifest-path tests-integration/Cargo.toml
-      - name: Run integration tests
-        run: go test -v ./tests-integration/...
+      - name: Integration tests
+        run: just test-integration
