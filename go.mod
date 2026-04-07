@@ -1,4 +1,4 @@
-module github.com/cgwalters/jsonrpc-fdpass-go
+module github.com/bootc-dev/jsonrpc-fdpass-go
 
 go 1.21
 
