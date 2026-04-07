@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	fdpass "github.com/cgwalters/jsonrpc-fdpass-go"
+	fdpass "github.com/bootc-dev/jsonrpc-fdpass-go"
 )
 
 const testServerBinary = "target/debug/test-server"

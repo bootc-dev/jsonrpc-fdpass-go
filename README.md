@@ -2,7 +2,7 @@
 
 A Go implementation of JSON-RPC 2.0 with file descriptor passing over Unix domain sockets.
 
-This library implements the protocol specified in [jsonrpc-fdpass](https://github.com/cgwalters/jsonrpc-fdpass).
+This library implements the protocol specified in [jsonrpc-fdpass](https://github.com/bootc-dev/jsonrpc-fdpass).
 
 ## Protocol Overview
 
@@ -18,7 +18,7 @@ layer defines the semantic mapping between FD positions and parameters.
 ## Installation
 
 ```bash
-go get github.com/cgwalters/jsonrpc-fdpass-go
+go get github.com/bootc-dev/jsonrpc-fdpass-go
 ```
 
 ## Usage
@@ -30,7 +30,7 @@ import (
     "net"
     "os"
 
-    fdpass "github.com/cgwalters/jsonrpc-fdpass-go"
+    fdpass "github.com/bootc-dev/jsonrpc-fdpass-go"
 )
 
 func main() {

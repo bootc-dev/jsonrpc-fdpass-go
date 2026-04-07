@@ -13,7 +13,7 @@ import (
 	"net"
 	"os"
 
-	fdpass "github.com/cgwalters/jsonrpc-fdpass-go"
+	fdpass "github.com/bootc-dev/jsonrpc-fdpass-go"
 )
 
 func main() {
