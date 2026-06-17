@@ -1,4 +1,6 @@
 # jsonrpc-fdpass-go
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fbootc-dev%2Fjsonrpc-fdpass-go.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fbootc-dev%2Fjsonrpc-fdpass-go?ref=badge_shield)
+
 
 A Go implementation of JSON-RPC 2.0 with file descriptor passing over Unix domain sockets.
 
@@ -66,3 +68,6 @@ func main() {
 ## License
 
 MIT
+
+
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fbootc-dev%2Fjsonrpc-fdpass-go.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fbootc-dev%2Fjsonrpc-fdpass-go?ref=badge_large)
